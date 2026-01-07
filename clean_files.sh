@@ -39,7 +39,98 @@ op_temporary()  { echo "RUN: temporary (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}'
 op_same_name()  { echo "RUN: same-name (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_access()     { echo "RUN: access (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
-op_copy()       { echo "RUN: copy (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+
+op_copy() {
+  # Copy regular files from input catalogs (Y...) into result catalog X.
+  # Preserve relative paths: Y1/sub/a.txt -> X/sub/a.txt
+  # If destination exists, suggest keeping the newer file based on mtime.
+  # Skip input catalogs that are the same as the result catalog.
+
+  local x="$DEFAULT_CATALOG"
+  local x_abs y_abs
+  local y src rel dst dst_dir
+  local src_mtime dst_mtime
+  local choice default_choice
+
+  # Ensure result catalog exists
+  [[ -d "$x" ]] || mkdir -p -- "$x"
+
+  x_abs="$(realpath -m -- "$x")"
+
+  for y in "${CATALOGS[@]}"; do
+    [[ -d "$y" ]] || continue
+
+    y_abs="$(realpath -m -- "$y")"
+    if [[ "$y_abs" == "$x_abs" ]]; then
+      echo "SKIP: input catalog equals result catalog: $y"
+      continue
+    fi
+
+    while IFS= read -r -d '' src; do
+      rel="${src#"$y"/}"
+      dst="$x/$rel"
+      dst_dir="$(dirname -- "$dst")"
+
+      if [[ ! -e "$dst" ]]; then
+        mkdir -p -- "$dst_dir"
+        cp -p -- "$src" "$dst"
+        echo "COPIED: $src -> $dst"
+        continue
+      fi
+
+      src_mtime="$(stat -c %Y -- "$src" 2>/dev/null || echo 0)"
+      dst_mtime="$(stat -c %Y -- "$dst" 2>/dev/null || echo 0)"
+
+      if (( src_mtime > dst_mtime )); then
+        default_choice="r"  # replace dst with src
+      else
+        default_choice="k"  # keep existing dst
+      fi
+
+      if [[ "$DEFAULT_OPTION" == "y" ]]; then
+        if [[ "$default_choice" == "r" ]]; then
+          cp -p -- "$src" "$dst"
+          echo "REPLACED (newer kept): $dst"
+        else
+          echo "KEPT (newer kept): $dst"
+        fi
+        continue
+      fi
+
+      echo "CONFLICT: destination already exists"
+      echo "  SRC: $src"
+      echo "  DST: $dst"
+      if [[ "$default_choice" == "r" ]]; then
+        echo "  Suggested: keep newer -> REPLACE destination"
+      else
+        echo "  Suggested: keep newer -> KEEP destination"
+      fi
+
+      printf "Choose [r]eplace / [k]eep / [s]kip (default: %s): " "$default_choice" > /dev/tty
+      IFS= read -r choice < /dev/tty
+      choice="${choice:-$default_choice}"
+
+
+      case "$choice" in
+        r|R)
+          cp -p -- "$src" "$dst"
+          echo "REPLACED: $dst"
+          ;;
+        k|K)
+          echo "KEPT: $dst"
+          ;;
+        s|S)
+          echo "SKIPPED: $src"
+          ;;
+        *)
+          wrong_usage
+          ;;
+      esac
+
+    done < <(find "$y" -type f -print0)
+  done
+}
+
 op_rename()     { echo "RUN: rename (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 
 source ./.clean_files
