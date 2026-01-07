@@ -11,12 +11,13 @@ Options:
 	-h, --help			Show this help message and exit
 	-x, --catalog PATH	Specify the result catalog path (default: ./X)
 		--default		Use default settings for operations
-	-d, --duplicates	Remove duplicate files
+	-d, --duplicates	Remove duplicate files (files with same content)
 	-e, --empty			Remove empty files
 	-t, --temporary		Remove temporary files
 	-s, --same-name		Remove files with same names
 	-a, --access		Change access permissions to default
 	-k, --tricky		Replace tricky letters in filenames with default
+  -m, --move         Move files to a result catalog
 	-c, --copy			Copy files to a result catalog
 	-r, --rename		Rename files
 
@@ -40,17 +41,21 @@ op_same_name()  { echo "RUN: same-name (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}'
 op_access()     { echo "RUN: access (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 
-op_copy() {
-  # Copy regular files from input catalogs (Y...) into result catalog X.
-  # Preserve relative paths: Y1/sub/a.txt -> X/sub/a.txt
-  # If destination exists, suggest keeping the newer file based on mtime.
+op_transfer() {
+  # Transfer files from input catalogs into result catalog.
+  # MODE: "copy" or "move"
+  # Preserve relative paths and handle conflicts by suggesting keeping the newer file.
   # Skip input catalogs that are the same as the result catalog.
+  # Interactive input is read from /dev/tty.
 
+  local MODE="$1"
   local x="$DEFAULT_CATALOG"
   local x_abs y_abs
   local y src rel dst dst_dir
   local src_mtime dst_mtime
   local choice default_choice
+
+  [[ "$MODE" == "copy" || "$MODE" == "move" ]] || wrong_usage
 
   # Ensure result catalog exists
   [[ -d "$x" ]] || mkdir -p -- "$x"
@@ -73,8 +78,13 @@ op_copy() {
 
       if [[ ! -e "$dst" ]]; then
         mkdir -p -- "$dst_dir"
-        cp -p -- "$src" "$dst"
-        echo "COPIED: $src -> $dst"
+        if [[ "$MODE" == "copy" ]]; then
+          cp -p -- "$src" "$dst"
+          echo "COPIED: $src -> $dst"
+        else
+          mv -- "$src" "$dst"
+          echo "MOVED: $src -> $dst"
+        fi
         continue
       fi
 
@@ -87,9 +97,14 @@ op_copy() {
         default_choice="k"  # keep existing dst
       fi
 
+      # Default option handling
       if [[ "$DEFAULT_OPTION" == "y" ]]; then
         if [[ "$default_choice" == "r" ]]; then
-          cp -p -- "$src" "$dst"
+          if [[ "$MODE" == "copy" ]]; then
+            cp -p -- "$src" "$dst"
+          else
+            mv -f -- "$src" "$dst"
+          fi
           echo "REPLACED (newer kept): $dst"
         else
           echo "KEPT (newer kept): $dst"
@@ -97,6 +112,7 @@ op_copy() {
         continue
       fi
 
+      # Interactive decision
       echo "CONFLICT: destination already exists"
       echo "  SRC: $src"
       echo "  DST: $dst"
@@ -110,10 +126,13 @@ op_copy() {
       IFS= read -r choice < /dev/tty
       choice="${choice:-$default_choice}"
 
-
       case "$choice" in
         r|R)
-          cp -p -- "$src" "$dst"
+          if [[ "$MODE" == "copy" ]]; then
+            cp -p -- "$src" "$dst"
+          else
+            mv -f -- "$src" "$dst"
+          fi
           echo "REPLACED: $dst"
           ;;
         k|K)
@@ -131,6 +150,15 @@ op_copy() {
   done
 }
 
+op_copy() {
+  op_transfer "copy"
+}
+
+op_move() {
+  op_transfer "move"
+}
+
+
 op_rename()     { echo "RUN: rename (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 
 source ./.clean_files
@@ -146,6 +174,7 @@ DO_TEMPORARY=0
 DO_SAME_NAME=0
 DO_ACCESS=0
 DO_TRICKY=0
+DO_MOVE=0
 DO_COPY=0
 DO_RENAME=0
 
@@ -173,6 +202,7 @@ while (( $# > 0 )); do
     -s|--same-name)  DO_SAME_NAME=1;  shift ;;
     -a|--access)     DO_ACCESS=1;     shift ;;
     -k|--tricky)     DO_TRICKY=1;     shift ;;  # -k to avoid conflict with -t
+    -m|--move)       DO_MOVE=1;       shift ;;
     -c|--copy)       DO_COPY=1;       shift ;;
     -r|--rename)     DO_RENAME=1;     shift ;;
 
@@ -199,5 +229,6 @@ done
 (( DO_SAME_NAME ))	&& op_same_name
 (( DO_ACCESS ))		&& op_access
 (( DO_TRICKY ))		&& op_tricky
+(( DO_MOVE )) && op_move
 (( DO_COPY ))		&& op_copy
 (( DO_RENAME ))		&& op_rename
