@@ -227,8 +227,94 @@ op_temporary() {
   done
 }
 
-op_same_name()  { echo "RUN: same-name (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+op_same_name() {
+  # Remove files with the same basename across input catalogs.
+  # Keep the newest file in each same-name set (based on mtime).
+  # In default mode (--default), delete automatically.
+  # In interactive mode, ask once per set and read input from /dev/tty.
+
+  local all_files=()
+  local input_catalog
+  local file_path
+  local file_index
+  local base_name
+  local answer
+
+  local newest_index newest_mtime current_mtime
+
+  declare -A name_to_indexes=()
+
+  # Collect all regular files from provided catalogs
+  for input_catalog in "${CATALOGS[@]}"; do
+    [[ -d "$input_catalog" ]] || continue
+    while IFS= read -r -d '' file_path; do
+      all_files+=("$file_path")
+    done < <(find "$input_catalog" -type f -print0)
+  done
+
+  # If no files found, return
+  (( ${#all_files[@]} > 0 )) || { echo "No files found."; return 0; }
+
+  # Group file indexes by basename
+  for file_index in "${!all_files[@]}"; do
+    base_name="$(basename -- "${all_files[$file_index]}")"
+    name_to_indexes["$base_name"]+="$file_index "
+  done
+
+  # Process each name group with more than one file
+  for base_name in "${!name_to_indexes[@]}"; do
+    read -r -a same_name_indexes <<< "${name_to_indexes[$base_name]}"
+    (( ${#same_name_indexes[@]} > 1 )) || continue
+
+    # Find newest file by mtime
+    newest_index="${same_name_indexes[0]}"
+    newest_mtime="$(stat -c %Y -- "${all_files[$newest_index]}" 2>/dev/null || echo 0)"
+
+    for file_index in "${same_name_indexes[@]}"; do
+      current_mtime="$(stat -c %Y -- "${all_files[$file_index]}" 2>/dev/null || echo 0)"
+      if (( current_mtime > newest_mtime )); then
+        newest_mtime="$current_mtime"
+        newest_index="$file_index"
+      fi
+    done
+
+    # Default mode: delete all except the newest
+    if [[ "$DEFAULT_OPTION" == "y" ]]; then
+      for file_index in "${same_name_indexes[@]}"; do
+        [[ "$file_index" == "$newest_index" ]] && continue
+        rm -f -- "${all_files[$file_index]}"
+        echo "DELETED SAME-NAME (older): ${all_files[$file_index]}"
+      done
+      echo "KEPT NEWEST: ${all_files[$newest_index]}"
+      continue
+    fi
+
+    # Interactive mode: show set and ask once per same-name set
+    echo "SAME-NAME FILES FOUND:"
+    echo "  Name: $base_name"
+    echo "  Suggested keep newest: ${all_files[$newest_index]}"
+    for file_index in "${same_name_indexes[@]}"; do
+      [[ "$file_index" == "$newest_index" ]] && continue
+      echo "  Candidate delete (older): ${all_files[$file_index]}"
+    done
+
+    printf "Delete older same-name files and keep newest? [y/N] " > /dev/tty
+    IFS= read -r answer < /dev/tty
+    if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+      for file_index in "${same_name_indexes[@]}"; do
+        [[ "$file_index" == "$newest_index" ]] && continue
+        rm -f -- "${all_files[$file_index]}"
+        echo "DELETED SAME-NAME (older): ${all_files[$file_index]}"
+      done
+      echo "KEPT NEWEST: ${all_files[$newest_index]}"
+    else
+      echo "SKIPPED SAME-NAME SET."
+    fi
+  done
+}
+
 op_access()     { echo "RUN: access (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+
 op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 
 op_transfer() {
