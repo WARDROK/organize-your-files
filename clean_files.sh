@@ -313,7 +313,48 @@ op_same_name() {
   done
 }
 
-op_access()     { echo "RUN: access (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+op_access() {
+  # Set file permissions to SUGGESTED_ACCESS from .clean_files.
+  # In default mode (--default), apply automatically.
+  # In interactive mode, ask per file and read input from /dev/tty.
+
+  local input_catalog
+  local file_path
+  local current_access
+  local answer
+
+  # SUGGESTED_ACCESS must be set in config
+  [[ -n "${SUGGESTED_ACCESS:-}" ]] || wrong_usage
+
+  for input_catalog in "${CATALOGS[@]}"; do
+    [[ -d "$input_catalog" ]] || continue
+
+    while IFS= read -r -d '' file_path; do
+      current_access="$(stat -c %a -- "$file_path" 2>/dev/null || echo "")"
+      [[ -n "$current_access" ]] || continue
+
+      # Skip files that already have the suggested permissions
+      [[ "$current_access" != "$SUGGESTED_ACCESS" ]] || continue
+
+      if [[ "$DEFAULT_OPTION" == "y" ]]; then
+        chmod -- "$SUGGESTED_ACCESS" "$file_path"
+        echo "CHMOD $SUGGESTED_ACCESS: $file_path"
+        continue
+      fi
+
+      printf "Change permissions for '%s' from %s to %s? [y/N] " \
+        "$file_path" "$current_access" "$SUGGESTED_ACCESS" > /dev/tty
+      IFS= read -r answer < /dev/tty
+      if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+        chmod -- "$SUGGESTED_ACCESS" "$file_path"
+        echo "CHMOD $SUGGESTED_ACCESS: $file_path"
+      else
+        echo "SKIPPED CHMOD: $file_path"
+      fi
+
+    done < <(find "$input_catalog" -type f -print0)
+  done
+}
 
 op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 
