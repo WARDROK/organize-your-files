@@ -150,7 +150,39 @@ op_duplicates() {
   done
 }
 
-op_empty()      { echo "RUN: empty (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+op_empty() {
+  # Remove empty files from input catalogs.
+  # In default mode (--default), delete automatically.
+  # In interactive mode, ask per file and read from /dev/tty.
+
+  local input_catalog
+  local empty_file_path
+  local answer
+
+  for input_catalog in "${CATALOGS[@]}"; do
+    [[ -d "$input_catalog" ]] || continue
+
+    while IFS= read -r -d '' empty_file_path; do
+      
+      if [[ "$DEFAULT_OPTION" == "y" ]]; then
+        rm -f -- "$empty_file_path"
+        echo "DELETED EMPTY: $empty_file_path"
+        continue
+      fi
+
+      # Interactive mode
+      printf "Delete empty file '%s'? [y/N] " "$empty_file_path" > /dev/tty
+      IFS= read -r answer < /dev/tty
+      if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+        rm -f -- "$empty_file_path"
+        echo "DELETED EMPTY: $empty_file_path"
+      else
+        echo "SKIPPED EMPTY: $empty_file_path"
+      fi
+    done < <(find "$input_catalog" -type f -empty -print0)
+  done
+}
+
 op_temporary()  { echo "RUN: temporary (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_same_name()  { echo "RUN: same-name (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_access()     { echo "RUN: access (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
@@ -347,3 +379,5 @@ done
 (( DO_MOVE )) && op_move
 (( DO_COPY ))		&& op_copy
 (( DO_RENAME ))		&& op_rename
+
+exit 0
