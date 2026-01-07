@@ -8,21 +8,21 @@ help() {
 Usage: $SCRIPT_NAME [CATALOGS_PATHS]... [OPTIONS]...
 
 Options:
-	-h, --help			Show this help message and exit
-	-x, --catalog PATH	Specify the result catalog path (default: ./X)
-		--default		Use default settings for operations
-	-d, --duplicates	Remove duplicate files (files with same content)
-	-e, --empty			Remove empty files
-	-t, --temporary		Remove temporary files
-	-s, --same-name		Remove files with same names
-	-a, --access		Change access permissions to default
-	-k, --tricky		Replace tricky letters in filenames with default
-  -m, --move         Move files to a result catalog
-	-c, --copy			Copy files to a result catalog
-	-r, --rename		Rename files
+	-h, --help          Show this help message and exit
+	-x, --catalog PATH	Specify the destination catalog path (default: ./X)
+	    --default       Use default settings for operations
+	-d, --duplicates    Remove duplicate files (files with same content)
+	-e, --empty         Remove empty files
+	-t, --temporary     Remove temporary files
+	-s, --same-name     Remove files with same names
+	-a, --access        Change access permissions to default
+	-k, --tricky        Replace tricky letters in filenames with default
+	-m, --move          Move files to a destination catalog
+	-c, --copy          Copy files to a destination catalog
+	-r, --rename        Rename files
 
 Example:
-  $SCRIPT_NAME ./X ./Y1 ./Y2 ./Y3 --catalog ./X --duplicates --empty --temporary --same-name --access --copy --tricky --default
+    $SCRIPT_NAME ./X ./Y1 ./Y2 ./Y3 --catalog ./X --duplicates --empty --temporary --same-name --access --copy --tricky --default
 EOF
   exit 0
 }
@@ -33,8 +33,123 @@ wrong_usage() {
   exit 1
 }
 
-# Operation functions
-op_duplicates() { echo "RUN: duplicates (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+#######################
+# Operation functions #
+#######################
+
+op_duplicates() {
+  # Remove duplicate files (same content) from input catalogs.
+  # Use size grouping first to avoid hashing everything.
+  # Use md5sum for content comparison.
+  # In interactive mode, read user input from /dev/tty.
+  # In default mode (--default), automatically delete duplicates, keeping the oldest.
+
+  local all_files=()
+  local input_catalog
+  local file_path
+  local file_index=0
+  local file_size
+  local file_hash hash_line
+  local file_mtime
+  local oldest_index oldest_mtime
+  local keep_file_path
+  local answer
+
+  declare -A size_to_indexes=()
+
+  # Collect all files from provided catalogs
+  for input_catalog in "${CATALOGS[@]}"; do
+    [[ -d "$input_catalog" ]] || continue
+    while IFS= read -r -d '' file_path; do
+      all_files+=("$file_path")
+    done < <(find "$input_catalog" -type f -print0)
+  done
+
+  # If no files found, return
+  (( ${#all_files[@]} > 0 )) || { echo "No files found."; return 0; }
+
+  # Group file indexes by size
+  for file_index in "${!all_files[@]}"; do
+    file_size="$(stat -c %s -- "${all_files[$file_index]}" 2>/dev/null || echo -1)"
+    [[ "$file_size" != "-1" ]] || continue
+    size_to_indexes["$file_size"]+="$file_index "
+  done
+
+  # Process each size group with more than one file
+  for file_size in "${!size_to_indexes[@]}"; do
+    read -r -a size_group_indexes <<< "${size_to_indexes[$file_size]}"
+    (( ${#size_group_indexes[@]} > 1 )) || continue
+
+    # Group by md5 hash within this size group
+    declare -A hash_to_indexes=()
+
+    for file_index in "${size_group_indexes[@]}"; do
+      file_path="${all_files[$file_index]}"
+
+      # Compute hash; if failed (permission), skip file
+      hash_line="$(md5sum -- "$file_path" 2>/dev/null || true)"
+      [[ -n "$hash_line" ]] || continue
+      file_hash="${hash_line%% *}"
+
+      hash_to_indexes["$file_hash"]+="$file_index "
+    done
+
+    # For each hash group with more than one file, handle duplicates
+    for file_hash in "${!hash_to_indexes[@]}"; do
+      read -r -a duplicate_indexes <<< "${hash_to_indexes[$file_hash]}"
+      (( ${#duplicate_indexes[@]} > 1 )) || continue
+
+      # Find oldest file by mtime (smallest timestamp)
+      oldest_index="${duplicate_indexes[0]}"
+      oldest_mtime="$(stat -c %Y -- "${all_files[$oldest_index]}" 2>/dev/null || echo 9223372036854775807)"
+
+      for file_index in "${duplicate_indexes[@]}"; do
+        file_mtime="$(stat -c %Y -- "${all_files[$file_index]}" 2>/dev/null || echo 9223372036854775807)"
+        if (( file_mtime < oldest_mtime )); then
+          oldest_mtime="$file_mtime"
+          oldest_index="$file_index"
+        fi
+      done
+
+      keep_file_path="${all_files[$oldest_index]}"
+
+      # Auto mode (--default): delete all but the oldest
+      if [[ "$DEFAULT_OPTION" == "y" ]]; then
+        for file_index in "${duplicate_indexes[@]}"; do
+          [[ "$file_index" == "$oldest_index" ]] && continue
+          rm -f -- "${all_files[$file_index]}"
+          echo "DELETED DUPLICATE: ${all_files[$file_index]}"
+        done
+        echo "KEPT OLDEST: $keep_file_path"
+        continue
+      fi
+
+      # Interactive: show set and ask once per duplicate set
+      echo "DUPLICATES FOUND (same content):"
+      echo "  Suggested keep oldest: $keep_file_path"
+      for file_index in "${duplicate_indexes[@]}"; do
+        [[ "$file_index" == "$oldest_index" ]] && continue
+        echo "  Duplicate: ${all_files[$file_index]}"
+      done
+
+      printf "Delete duplicates and keep oldest? [y/N] " > /dev/tty
+      IFS= read -r answer < /dev/tty
+      if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+        for file_index in "${duplicate_indexes[@]}"; do
+          [[ "$file_index" == "$oldest_index" ]] && continue
+          rm -f -- "${all_files[$file_index]}"
+          echo "DELETED DUPLICATE: ${all_files[$file_index]}"
+        done
+        echo "KEPT OLDEST: $keep_file_path"
+      else
+        echo "SKIPPED DUPLICATE SET."
+      fi
+    done
+
+    unset hash_to_indexes
+  done
+}
+
 op_empty()      { echo "RUN: empty (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_temporary()  { echo "RUN: temporary (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_same_name()  { echo "RUN: same-name (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
@@ -42,10 +157,10 @@ op_access()     { echo "RUN: access (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', d
 op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 
 op_transfer() {
-  # Transfer files from input catalogs into result catalog.
+  # Transfer files from input catalogs into destination catalog.
   # MODE: "copy" or "move"
   # Preserve relative paths and handle conflicts by suggesting keeping the newer file.
-  # Skip input catalogs that are the same as the result catalog.
+  # Skip input catalogs that are the same as the destination catalog.
   # Interactive input is read from /dev/tty.
 
   local MODE="$1"
@@ -57,7 +172,7 @@ op_transfer() {
 
   [[ "$MODE" == "copy" || "$MODE" == "move" ]] || wrong_usage
 
-  # Ensure result catalog exists
+  # Ensure destination catalog exists
   [[ -d "$x" ]] || mkdir -p -- "$x"
 
   x_abs="$(realpath -m -- "$x")"
@@ -67,7 +182,7 @@ op_transfer() {
 
     y_abs="$(realpath -m -- "$y")"
     if [[ "$y_abs" == "$x_abs" ]]; then
-      echo "SKIP: input catalog equals result catalog: $y"
+      echo "SKIP: input catalog equals destination catalog: $y"
       continue
     fi
 
