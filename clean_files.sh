@@ -21,6 +21,14 @@ Options:
 	-c, --copy          Copy files to a destination catalog
 	-r, --rename        Rename files
 
+Config:
+  The script expects a config file: ./.clean_files
+  Example content:
+    SUGGESTED_ACCESS=644
+    TRICKY_LETTERS=:"\\"”;*?\\$#'‘|\\\\"
+    TRICKY_LETTER_SUBSTITUTE="_"
+    TMP_FILES=".*(\\.tmp|.temp|~)"
+
 Example:
     $SCRIPT_NAME ./X ./Y1 ./Y2 ./Y3 --catalog ./X --duplicates --empty --temporary --same-name --access --copy --tricky --default
 EOF
