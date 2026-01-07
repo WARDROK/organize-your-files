@@ -1,0 +1,4 @@
+SUGGESTED_ACCESS=644
+TRICKY_LETTERS=:"\"”;*?\$#'‘|\\"
+TRICKY_LETTER_SUBSTITUTE="_"
+TMP_FILES=".*\(\.tmp\|~\)"

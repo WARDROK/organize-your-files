@@ -42,6 +42,8 @@ op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*
 op_copy()       { echo "RUN: copy (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_rename()     { echo "RUN: rename (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 
+source ./.clean_files
+
 # Parse command-line arguments
 CATALOGS=()
 DEFAULT_CATALOG="./X"
