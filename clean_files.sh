@@ -163,7 +163,7 @@ op_empty() {
     [[ -d "$input_catalog" ]] || continue
 
     while IFS= read -r -d '' empty_file_path; do
-      
+      # Default mode
       if [[ "$DEFAULT_OPTION" == "y" ]]; then
         rm -f -- "$empty_file_path"
         echo "DELETED EMPTY: $empty_file_path"
@@ -183,7 +183,42 @@ op_empty() {
   done
 }
 
-op_temporary()  { echo "RUN: temporary (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+op_temporary() {
+  # Remove temporary files from input catalogs using TMP_FILES pattern from .clean_files.
+  # TMP_FILES is treated as a ERE (Extended Regular Expression) for grep.
+  # In default mode (--default), delete automatically.
+  # In interactive mode, ask per file and read from /dev/tty.
+
+  local input_catalog
+  local file_path
+  local answer
+
+  # TMP_FILES must be set in config
+  [[ -n "${TMP_FILES:-}" ]] || wrong_usage
+
+  for input_catalog in "${CATALOGS[@]}"; do
+    [[ -d "$input_catalog" ]] || continue
+
+    while IFS= read -r -d '' file_path; do
+      if printf '%s\n' "$(basename -- "$file_path")" | grep -Eq -- "$TMP_FILES"; then
+        if [[ "$DEFAULT_OPTION" == "y" ]]; then
+          rm -f -- "$file_path"
+          echo "DELETED TEMPORARY: $file_path"
+        else
+          printf "Delete temporary file '%s'? [y/N] " "$file_path" > /dev/tty
+          IFS= read -r answer < /dev/tty
+          if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+            rm -f -- "$file_path"
+            echo "DELETED TEMPORARY: $file_path"
+          else
+            echo "SKIPPED TEMPORARY: $file_path"
+          fi
+        fi
+      fi
+    done < <(find "$input_catalog" -type f -print0)
+  done
+}
+
 op_same_name()  { echo "RUN: same-name (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_access()     { echo "RUN: access (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
 op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
