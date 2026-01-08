@@ -8,26 +8,26 @@ help() {
 Usage: $SCRIPT_NAME [CATALOGS_PATHS]... [OPTIONS]...
 
 Options:
-	-h, --help          Show this help message and exit
-	-x, --catalog PATH	Specify the destination catalog path (default: ./X)
-	    --default       Use default settings for operations
-	-d, --duplicates    Remove duplicate files (files with same content)
-	-e, --empty         Remove empty files
-	-t, --temporary     Remove temporary files
-	-s, --same-name     Remove files with same names
-	-a, --access        Change access permissions to default
-	-k, --tricky        Replace tricky letters in filenames with default
-	-m, --move          Move files to a destination catalog
-	-c, --copy          Copy files to a destination catalog
-	-r, --rename        Rename files
+  -h, --help          Show this help message and exit
+  -x, --catalog PATH  Specify the destination catalog path (default: ./X)
+      --default       Use default settings for operations
+  -d, --duplicates    Remove duplicate files (files with same content)
+  -e, --empty         Remove empty files
+  -t, --temporary     Remove temporary files
+  -s, --same-name     Remove files with same names
+  -a, --access        Change access permissions to default
+  -k, --tricky        Replace tricky letters in filenames with default
+  -m, --move          Move files to a destination catalog
+  -c, --copy          Copy files to a destination catalog
+  -r, --rename        Rename files
 
 Config:
   The script expects a config file: ./.clean_files
   Example content:
     SUGGESTED_ACCESS=644
-    TRICKY_LETTERS=:"\\"”;*?\\$#'‘|\\\\"
-    TRICKY_LETTER_SUBSTITUTE="_"
-    TMP_FILES=".*(\\.tmp|.temp|~)"
+    TRICKY_LETTERS=']:".;#*?$'\''|\<>&![{}'
+    TRICKY_LETTER_SUBSTITUTE='_'
+    TMP_FILES='.*(\.tmp|.temp|~)'
 
 Example:
     $SCRIPT_NAME ./X ./Y1 ./Y2 ./Y3 --catalog ./X --duplicates --empty --temporary --same-name --access --copy --tricky --default
@@ -553,7 +553,59 @@ op_move() {
 }
 
 
-op_rename()     { echo "RUN: rename (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+op_rename() {
+  # Interactive rename for every file in provided catalogs.
+  # Renames ONLY within the same directory (no moving).
+  # If the new name already exists in that directory, ask again.
+
+  local input_catalog
+  local file_path
+  local directory_path
+  local answer
+  local new_base_name
+  local destination_path
+
+  for input_catalog in "${CATALOGS[@]}"; do
+    [[ -d "$input_catalog" ]] || continue
+
+    while IFS= read -r -d $'\0' file_path; do
+      directory_path="$(dirname -- "$file_path")"
+
+      printf "Do you want to rename file: %s? [y/N] " "$file_path" > /dev/tty
+      IFS= read -r answer < /dev/tty
+      [[ "$answer" == "y" || "$answer" == "Y" ]] || continue
+
+      while true; do
+        printf "Provide new name: " > /dev/tty
+        IFS= read -r new_base_name < /dev/tty
+
+        # Empty input -> ask again
+        [[ -n "$new_base_name" ]] || { echo "Name cannot be empty." > /dev/tty; continue; }
+
+        # Do not allow path separators -> prevents moving
+        if [[ "$new_base_name" == */* ]]; then
+          echo "Please provide only a filename (no '/')." > /dev/tty
+          continue
+        fi
+
+        destination_path="${directory_path}/${new_base_name}"
+
+        # If destination exists in the same directory -> ask again
+        if [[ -e "$destination_path" ]]; then
+          echo "File already exists: $destination_path" > /dev/tty
+          echo "Please choose a different name." > /dev/tty
+          continue
+        fi
+
+        mv -- "$file_path" "$destination_path"
+        echo "RENAMED: $file_path -> $destination_path"
+        break
+      done
+
+    done < <(find "$input_catalog" -type f -print0)
+  done
+}
+
 
 source ./.clean_files
 
@@ -617,6 +669,7 @@ done
 (( ${#CATALOGS[@]} > 0 )) || wrong_usage
 
 # Run selected operations after parsing
+(( DO_RENAME ))		&& op_rename
 (( DO_DUPLICATES ))	&& op_duplicates
 (( DO_EMPTY ))		&& op_empty
 (( DO_TEMPORARY ))  && op_temporary
@@ -625,6 +678,5 @@ done
 (( DO_TRICKY ))		&& op_tricky
 (( DO_MOVE )) && op_move
 (( DO_COPY ))		&& op_copy
-(( DO_RENAME ))		&& op_rename
 
 exit 0
