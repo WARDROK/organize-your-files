@@ -356,7 +356,84 @@ op_access() {
   done
 }
 
-op_tricky()     { echo "RUN: tricky-names (X='$DEFAULT_CATALOG', Y='${CATALOGS[*]}', default=$DEFAULT_OPTION)"; }
+op_tricky() {
+  # Rename files whose basename contains any character from TRICKY_LETTERS.
+  # Replace those characters with TRICKY_LETTER_SUBSTITUTE (sed).
+  # If target exists, append _N to make it unique.
+  # In interactive mode, read input from /dev/tty.
+
+  local input_catalog
+  local file_path directory_path base_name new_base_name
+  local destination_path unique_destination_path
+  local answer counter name_part ext_part
+
+  [[ -n "${TRICKY_LETTERS:-}" ]] || wrong_usage
+  [[ -n "${TRICKY_LETTER_SUBSTITUTE:-}" ]] || wrong_usage
+
+  for input_catalog in "${CATALOGS[@]}"; do
+    [[ -d "$input_catalog" ]] || continue
+
+    while IFS= read -r -d $'\0' file_path; do
+      base_name="$(basename -- "$file_path")"
+
+      # Skip if no tricky chars in basename
+      printf '%s' "$base_name" | grep -q -- "[${TRICKY_LETTERS}]" || continue
+
+      directory_path="$(dirname -- "$file_path")"
+
+      # Preserve the last dot (keep extension) by transforming only the name part
+      if [[ "$base_name" == *.* && "$base_name" != .* ]]; then
+        name_part="${base_name%.*}"
+        ext_part=".${base_name##*.}"
+      else
+        name_part="$base_name"
+        ext_part=""
+      fi
+
+      name_part="$(printf '%s' "$name_part" | sed "s/[${TRICKY_LETTERS}]/${TRICKY_LETTER_SUBSTITUTE}/g")"
+      new_base_name="${name_part}${ext_part}"      
+      destination_path="${directory_path}/${new_base_name}"
+
+      # Skip if nothing changed
+      [[ "$new_base_name" != "$base_name" ]] || continue
+
+      # Make destination unique if needed (avoid overwrite)
+      unique_destination_path="$destination_path"
+      if [[ -e "$unique_destination_path" ]]; then
+        if [[ "$new_base_name" == *.* && "$new_base_name" != .* ]]; then
+          name_part="${new_base_name%.*}"
+          ext_part=".${new_base_name##*.}"
+        else
+          name_part="$new_base_name"
+          ext_part=""
+        fi
+
+        counter=1
+        while [[ -e "${directory_path}/${name_part}_${counter}${ext_part}" ]]; do
+          ((counter++))
+        done
+        unique_destination_path="${directory_path}/${name_part}_${counter}${ext_part}"
+      fi
+
+      if [[ "$DEFAULT_OPTION" == "y" ]]; then
+        echo "RENAMING: $file_path -> $unique_destination_path"
+        mv -- "$file_path" "$unique_destination_path"
+      else
+        echo "Detected file with tricky letters: $file_path"
+        printf "Rename to '%s'? [y/N] " "$unique_destination_path" > /dev/tty
+        IFS= read -r answer < /dev/tty
+        if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+          mv -- "$file_path" "$unique_destination_path"
+          echo "RENAMED: $file_path -> $unique_destination_path"
+        else
+          echo "SKIPPED: $file_path"
+        fi
+      fi
+
+    done < <(find "$input_catalog" -type f -print0)
+  done
+}
+
 
 op_transfer() {
   # Transfer files from input catalogs into destination catalog.
