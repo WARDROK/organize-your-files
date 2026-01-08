@@ -142,7 +142,7 @@ TMP_FILES='.*(\.tmp|.temp|~)'
 - You can combine multiple operations in one run:
 
 ```bash
-./clean_files.sh ./X ./Y1 ./Y2 -c ./X -e -t -a -c --default
+./clean_files.sh ./X ./Y1 ./Y2 -x ./X -e -t -a -c --default
 ```
 
 ## Author
